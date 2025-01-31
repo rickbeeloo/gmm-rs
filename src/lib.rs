@@ -208,20 +208,42 @@ impl GaussianMixtureModel {
         for k in 0..self.comp_count {
             let mut cov_k = Array2::zeros((d, d));
             let w_k = weights.column(k);
+            let w_sum = w_k.sum();
             let mu_k = new_means.row(k);
 
+            // Compute weighted covariance
             for i in 0..n {
                 let x_i = inputs.row(i);
                 let diff = &x_i - &mu_k;
                 let weight = w_k[i];
-                cov_k = cov_k + self.compute_cov(diff.view(), weight);
+                
+                // Use the appropriate covariance computation based on CovOption
+                match self.cov_option {
+                    CovOption::Full | CovOption::Regularized(_) => {
+                        for i in 0..d {
+                            for j in 0..d {
+                                cov_k[[i, j]] += weight * diff[i] * diff[j];
+                            }
+                        }
+                    }
+                    CovOption::Diagonal => {
+                        for i in 0..d {
+                            cov_k[[i, i]] += weight * diff[i] * diff[i];
+                        }
+                    }
+                }
             }
 
-            cov_k = &cov_k / w_k.sum();
-            
+            // Normalize by sum of weights
+            cov_k = &cov_k / w_sum;
+
+            // Apply regularization if specified
             if let CovOption::Regularized(eps) = self.cov_option {
+                let base_variance = cov_k.diag().mean().unwrap_or(1.0);
+                let reg_term = eps * base_variance;
+                
                 for i in 0..d {
-                    cov_k[[i, i]] += eps;
+                    cov_k[[i, i]] += reg_term;
                 }
             }
 
