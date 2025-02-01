@@ -85,15 +85,43 @@ impl GaussianMixtureModel {
             Some(vec![cov_mat; k])
         };
 
-        // Initialize means by randomly selecting k rows from inputs
-        let mut rng = thread_rng();
-        let mut indices: Vec<usize> = (0..inputs.nrows()).collect();
-        indices.shuffle(&mut rng);
-        let random_rows = &indices[..k];
-        
-        self.model_means = Some(Array2::from_shape_fn((k, inputs.ncols()), |(i, j)| {
-            inputs[[random_rows[i], j]]
-        }));
+        // For k=2, use quantile-based initialization
+        if k == 2 {
+            let n = inputs.nrows();
+            let d = inputs.ncols();
+            
+            // Calculate distances from mean
+            let mean = inputs.mean_axis(Axis(0)).unwrap();
+            let mut distances: Vec<(usize, f64)> = inputs.rows()
+                .into_iter()
+                .enumerate()
+                .map(|(i, row)| {
+                    let diff = &row - &mean;
+                    (i, diff.dot(&diff).sqrt())
+                })
+                .collect();
+            
+            // Sort by distance
+            distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            
+            // Pick points at 10th and 90th percentile
+            let low_idx = n / 10;
+            let high_idx = n * 9 / 10;
+            
+            self.model_means = Some(Array2::from_shape_fn((k, d), |(i, j)| {
+                inputs[[if i == 0 { distances[low_idx].0 } else { distances[high_idx].0 }, j]]
+            }));
+        } else {
+            // Fall back to random initialization for other k values
+            let mut rng = thread_rng();
+            let mut indices: Vec<usize> = (0..inputs.nrows()).collect();
+            indices.shuffle(&mut rng);
+            let random_rows = &indices[..k];
+            
+            self.model_means = Some(Array2::from_shape_fn((k, inputs.ncols()), |(i, j)| {
+                inputs[[random_rows[i], j]]
+            }));
+        }
 
         // EM Algorithm
         for _ in 0..self.max_iters {
